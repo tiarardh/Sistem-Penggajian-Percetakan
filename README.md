@@ -18,16 +18,10 @@ Publishable key memang digunakan di browser. Jangan pernah memasukkan Secret ata
 
 ## Akun dan Role
 
-1. Setelah schema terpasang, daftarkan akun pertama melalui **Daftar Guest**.
-2. Di SQL Editor, jadikan akun tersebut admin (ganti alamat email):
+1. Setelah schema terpasang, gunakan satu akun Auth pemilik yang sudah terverifikasi. Daftarkan sekali melalui **Daftar Guest**, atau buat akun/undangan melalui **Supabase Dashboard > Authentication > Users**. Hindari signup berulang; provider email bawaan Supabase membatasi pengiriman email.
+2. Buka `sql/bootstrap_first_admin.sql`, ganti `REPLACE_WITH_VERIFIED_OWNER_EMAIL` dengan email pemilik, lalu jalankan file itu satu kali di SQL Editor. Skrip berhenti jika email belum terverifikasi atau admin sudah ada.
 
-```sql
-update public.profiles
-set role = 'admin', employee_id = null
-where lower(email) = lower('admin@example.com');
-```
-
-3. Keluar lalu masuk kembali. Semua pendaftaran dari frontend selalu dimulai sebagai Guest; hanya admin yang dapat mengubah role.
+3. Masuk dengan akun pemilik. Semua signup dari frontend selalu dimulai sebagai Guest; tidak ada password atau secret yang disimpan di source code.
 4. Buat data karyawan dari menu **Karyawan**. Setelah karyawan mendaftar dan verifikasi email, buka **Pengguna**, ubah role menjadi **Karyawan**, lalu tautkan ke data karyawan yang sesuai.
 
 Admin dapat mengelola role akun yang sudah mendaftar. Pembuatan/invitasi akun Auth harus dilakukan melalui alur signup Supabase; aplikasi static tidak menggunakan Admin API atau service-role key.

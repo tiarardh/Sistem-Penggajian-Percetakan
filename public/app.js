@@ -494,6 +494,21 @@ function setAuthNotice(message = '', isError = false) {
   notice.classList.toggle('error', isError);
 }
 
+function authErrorMessage(error, action) {
+  const code = String(error.code || error.error_code || '').toLowerCase();
+  const message = String(error.message || '').toLowerCase();
+  if (action === 'signup' && (
+    error.status === 429
+    || /rate.?limit|email limit exceeded|too many emails|over_email_send_rate_limit/.test(`${code} ${message}`)
+  )) {
+    return 'Pendaftaran email sedang dibatasi oleh Supabase. Coba kembali nanti atau masuk jika akun Anda sudah terdaftar.';
+  }
+  if (action === 'signup' && /user_already_exists|email_exists|already registered|already been registered/.test(`${code} ${message}`)) {
+    return 'Email ini mungkin sudah memiliki akun. Coba masuk, atau gunakan alamat email lain.';
+  }
+  return error.message || (action === 'signup' ? 'Pendaftaran gagal.' : 'Login gagal.');
+}
+
 function setAuthMode(mode) {
   state.authMode = mode;
   document.querySelector('#login-form').hidden = mode !== 'login';
@@ -977,7 +992,7 @@ document.querySelector('#login-form').addEventListener('submit', async (event) =
     const { error } = await supabase.auth.signInWithPassword({ email: values.email, password: values.password });
     if (error) throw error;
   } catch (error) {
-    setAuthNotice(error.message || 'Login gagal.', true);
+    setAuthNotice(authErrorMessage(error, 'login'), true);
   } finally {
     submit.disabled = false;
   }
@@ -996,9 +1011,9 @@ document.querySelector('#signup-form').addEventListener('submit', async (event) 
     });
     if (error) throw error;
     if (data.session) await activateSession(data.session);
-    else setAuthNotice('Pendaftaran berhasil. Verifikasi email jika diminta, lalu masuk sebagai Guest.');
+    else setAuthNotice('Permintaan pendaftaran diterima. Jika konfirmasi email aktif, buka email verifikasi sebelum masuk. Periksa juga folder spam.');
   } catch (error) {
-    setAuthNotice(error.message || 'Pendaftaran gagal.', true);
+    setAuthNotice(authErrorMessage(error, 'signup'), true);
   } finally {
     submit.disabled = false;
   }
