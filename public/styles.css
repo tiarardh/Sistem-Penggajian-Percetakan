@@ -529,3 +529,56 @@ tbody tr:hover { background: #fcfdfc; }
 .check-filter input { width: 15px; height: 15px; margin: 0; accent-color: var(--teal); }
 :root[data-theme="dark"] .alert-item.is-actionable:hover { filter: brightness(1.08); }
 :root[data-theme="dark"] .metric-cta { color: #d8cfd4; }
+
+[hidden] { display: none !important; }
+.auth-shell { display: grid; min-height: 100vh; place-items: center; padding: 28px 16px; }
+.auth-panel { width: min(100%, 440px); padding: 30px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); box-shadow: var(--shadow); animation: dashboard-enter .3s ease-out both; }
+.auth-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 30px; }
+.auth-brand .brand-mark { background: var(--sidebar); }
+.auth-brand strong, .auth-brand small { display: block; }
+.auth-brand strong { color: var(--ink); font: 700 18px/1.1 "Space Grotesk", sans-serif; }
+.auth-brand small { margin-top: 4px; color: var(--muted); font-size: 10px; }
+.auth-panel h1 { margin: 0; font: 700 25px/1.2 "Space Grotesk", sans-serif; }
+.auth-copy { margin: 7px 0 20px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.auth-tabs { display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px; margin-bottom: 18px; padding: 4px; border: 1px solid var(--line); border-radius: 6px; background: var(--canvas); }
+.auth-tab { min-height: 34px; border: 0; border-radius: 4px; color: var(--muted); background: transparent; cursor: pointer; font: 600 12px "DM Sans", sans-serif; }
+.auth-tab.active { color: var(--ink); background: var(--paper); box-shadow: 0 1px 4px rgba(44, 41, 43, .12); }
+.auth-form { display: grid; gap: 8px; }
+.auth-form label { margin-top: 7px; color: var(--ink); font-size: 12px; font-weight: 600; }
+.auth-form .field-control { margin-bottom: 3px; }
+.auth-submit { width: 100%; margin-top: 12px; }
+.auth-notice { margin: 0 0 14px; padding: 10px 12px; border: 1px solid #d8e6d7; border-radius: 5px; color: #3d694c; background: #f0f5eb; font-size: 11px; line-height: 1.5; }
+.auth-notice.error { border-color: #efd7d4; color: #9d453e; background: var(--red-pale); }
+.guest-panel { display: grid; justify-items: start; gap: 12px; padding-top: 6px; }
+.guest-panel p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.role-badge { display: inline-flex; min-height: 19px; align-items: center; width: fit-content; padding: 0 7px; border-radius: 10px; color: #53663f; background: var(--teal-pale); font-size: 9px; font-weight: 700; text-transform: uppercase; }
+.role-admin { color: #875264; background: var(--rose-pale); }
+.role-karyawan { color: #53663f; background: var(--teal-pale); }
+.role-guest, .badge-guest { color: #6b6570; background: #efedf0; }
+.badge-admin { color: #875264; background: var(--rose-pale); }
+.badge-karyawan { color: #53663f; background: var(--teal-pale); }
+.user-identity { display: grid; gap: 3px; }
+.logout-button { width: 32px; height: 32px; }
+html[data-role="karyawan"] [data-action="preview-payroll"],
+html[data-role="karyawan"] [data-action="mark-paid"],
+html[data-role="karyawan"] [data-action="view-audit"],
+html[data-role="karyawan"] [data-action="delete-attendance"],
+html[data-role="karyawan"] [data-action="delete-position"],
+html[data-role="karyawan"] [data-action="edit-position"],
+html[data-role="karyawan"] [data-action="edit-employee"],
+html[data-role="karyawan"] [data-action="toggle-employee"] { display: none !important; }
+:root[data-theme="dark"] .auth-panel { border-color: var(--line); background: var(--paper); }
+:root[data-theme="dark"] .auth-tab.active { color: var(--ink); background: #39353d; }
+:root[data-theme="dark"] .auth-notice { border-color: #4a5940; color: #d9e5be; background: #343d30; }
+:root[data-theme="dark"] .auth-notice.error { border-color: #63434a; color: #f2b5b5; background: #493331; }
+@media (max-width: 600px) {
+  .auth-panel { padding: 24px 20px; }
+  .auth-brand { margin-bottom: 24px; }
+  .topbar-right { gap: 4px; }
+  .user-identity { display: grid; max-width: 72px; }
+  .user-identity .user-name { display: block; max-width: 72px; overflow: hidden; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+  .role-badge { min-height: 16px; padding: 0 5px; font-size: 8px; }
+  .user-avatar { width: 26px; height: 26px; }
+  .theme-toggle, .logout-button { width: 29px; height: 29px; }
+  .breadcrumb > span:first-child, .crumb-slash { display: none; }
+}

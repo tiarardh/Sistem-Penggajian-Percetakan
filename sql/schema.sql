@@ -58,6 +58,16 @@ create table if not exists public.payroll_audit (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  employee_id uuid unique references public.employees(id) on delete set null,
+  name text not null check (char_length(trim(name)) between 1 and 120),
+  email text unique,
+  role text not null default 'guest' check (role in ('admin', 'karyawan', 'guest')),
+  created_at timestamptz not null default now(),
+  check (role <> 'karyawan' or employee_id is not null)
+);
+
 create index if not exists employees_position_id_idx on public.employees(position_id);
 create index if not exists attendance_employee_date_idx on public.attendance(employee_id, attendance_date desc);
 create index if not exists attendance_date_idx on public.attendance(attendance_date desc);
@@ -91,26 +101,145 @@ create trigger payroll_audit_capture
 after insert or update on public.payroll
 for each row execute function public.capture_payroll_audit();
 
+create or replace function public.current_app_role()
+returns text
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select role from public.profiles where id = (select auth.uid());
+$$;
+
+create or replace function public.is_admin()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select coalesce(public.current_app_role() = 'admin', false);
+$$;
+
+create or replace function public.current_employee_id()
+returns uuid
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select employee_id from public.profiles
+  where id = (select auth.uid()) and role = 'karyawan';
+$$;
+
+revoke all on function public.current_app_role() from public, anon;
+revoke all on function public.is_admin() from public, anon;
+revoke all on function public.current_employee_id() from public, anon;
+grant execute on function public.current_app_role() to authenticated;
+grant execute on function public.is_admin() to authenticated;
+grant execute on function public.current_employee_id() to authenticated;
+
+create or replace function public.handle_auth_user_profile()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  insert into public.profiles (id, name, email, role)
+  values (
+    new.id,
+    coalesce(nullif(trim(new.raw_user_meta_data ->> 'name'), ''), split_part(coalesce(new.email, 'Guest'), '@', 1)),
+    new.email,
+    'guest'
+  )
+  on conflict (id) do update set email = excluded.email;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_profile_created on auth.users;
+create trigger on_auth_user_profile_created
+after insert or update on auth.users
+for each row execute function public.handle_auth_user_profile();
+revoke all on function public.handle_auth_user_profile() from public, anon, authenticated;
+
+insert into public.profiles (id, name, email, role)
+select users.id,
+       coalesce(nullif(trim(users.raw_user_meta_data ->> 'name'), ''), split_part(coalesce(users.email, 'Guest'), '@', 1)),
+       users.email,
+       'guest'
+from auth.users as users
+on conflict (id) do update set email = excluded.email;
+
+alter table public.profiles enable row level security;
 alter table public.positions enable row level security;
 alter table public.employees enable row level security;
 alter table public.attendance enable row level security;
 alter table public.payroll enable row level security;
 alter table public.payroll_audit enable row level security;
 
-drop policy if exists "Prototype access positions" on public.positions;
-create policy "Prototype access positions" on public.positions for all to anon using (true) with check (true);
-drop policy if exists "Prototype access employees" on public.employees;
-create policy "Prototype access employees" on public.employees for all to anon using (true) with check (true);
-drop policy if exists "Prototype access attendance" on public.attendance;
-create policy "Prototype access attendance" on public.attendance for all to anon using (true) with check (true);
-drop policy if exists "Prototype access payroll" on public.payroll;
-create policy "Prototype access payroll" on public.payroll for all to anon using (true) with check (true);
-drop policy if exists "Prototype read payroll audit" on public.payroll_audit;
-create policy "Prototype read payroll audit" on public.payroll_audit for select to anon using (true);
+do $$
+declare
+  existing_policy record;
+begin
+  for existing_policy in
+    select schemaname, tablename, policyname
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = any(array['profiles', 'positions', 'employees', 'attendance', 'payroll', 'payroll_audit'])
+  loop
+    execute format('drop policy if exists %I on %I.%I', existing_policy.policyname, existing_policy.schemaname, existing_policy.tablename);
+  end loop;
+end;
+$$;
 
-grant usage on schema public to anon;
-grant select, insert, update, delete on public.positions, public.employees, public.attendance, public.payroll to anon;
-grant select on public.payroll_audit to anon;
+create policy "profiles_select_self_or_admin" on public.profiles
+for select to authenticated using (id = (select auth.uid()) or public.is_admin());
+create policy "profiles_admin_update" on public.profiles
+for update to authenticated using (public.is_admin() and id <> (select auth.uid()))
+with check (public.is_admin() and id <> (select auth.uid()));
+
+create policy "positions_admin_all" on public.positions
+for all to authenticated using (public.is_admin()) with check (public.is_admin());
+create policy "positions_employee_read_own" on public.positions
+for select to authenticated using (
+  id = (select employees.position_id from public.employees where employees.id = public.current_employee_id())
+);
+
+create policy "employees_admin_all" on public.employees
+for all to authenticated using (public.is_admin()) with check (public.is_admin());
+create policy "employees_read_own" on public.employees
+for select to authenticated using (id = public.current_employee_id());
+
+create policy "attendance_admin_all" on public.attendance
+for all to authenticated using (public.is_admin()) with check (public.is_admin());
+create policy "attendance_employee_read_own" on public.attendance
+for select to authenticated using (employee_id = public.current_employee_id());
+create policy "attendance_employee_insert_own" on public.attendance
+for insert to authenticated with check (
+  public.current_app_role() = 'karyawan' and employee_id = public.current_employee_id()
+);
+create policy "attendance_employee_update_own" on public.attendance
+for update to authenticated using (
+  public.current_app_role() = 'karyawan' and employee_id = public.current_employee_id()
+) with check (
+  public.current_app_role() = 'karyawan' and employee_id = public.current_employee_id()
+);
+
+create policy "payroll_admin_all" on public.payroll
+for all to authenticated using (public.is_admin()) with check (public.is_admin());
+create policy "payroll_employee_read_own" on public.payroll
+for select to authenticated using (employee_id = public.current_employee_id());
+create policy "payroll_audit_admin_read" on public.payroll_audit
+for select to authenticated using (public.is_admin());
+
+revoke all on table public.profiles, public.positions, public.employees, public.attendance, public.payroll, public.payroll_audit from public, anon, authenticated;
+grant usage on schema public to authenticated;
+grant select on public.profiles to authenticated;
+grant update (name, role, employee_id) on public.profiles to authenticated;
+grant select, insert, update, delete on public.positions, public.employees, public.attendance, public.payroll to authenticated;
+grant select on public.payroll_audit to authenticated;
 
 insert into public.positions (name, base_salary)
 values

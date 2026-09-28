@@ -14,7 +14,38 @@
     <script src="./app.js" defer></script>
   </head>
   <body>
-    <div class="app-shell">
+    <main class="auth-shell" id="auth-shell">
+      <section class="auth-panel">
+        <div class="auth-brand"><span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span><div><strong>PAYROLLY</strong><small>Employee & Payroll Management System</small></div></div>
+        <span class="eyebrow">AKSES SISTEM</span>
+        <h1 id="auth-title">Selamat datang kembali</h1>
+        <p class="auth-copy">Masuk untuk melanjutkan ke ruang kerja PAYROLLY.</p>
+        <div class="auth-tabs" role="tablist" aria-label="Akses akun">
+          <button class="auth-tab active" type="button" role="tab" aria-selected="true" data-auth-mode="login">Masuk</button>
+          <button class="auth-tab" type="button" role="tab" aria-selected="false" data-auth-mode="signup">Daftar Guest</button>
+        </div>
+        <p class="auth-notice" id="auth-notice" role="status" hidden></p>
+        <div id="auth-forms">
+          <form class="auth-form" id="login-form">
+            <label for="login-email">Email</label><input class="field-control" id="login-email" name="email" type="email" autocomplete="username" required>
+            <label for="login-password">Kata sandi</label><input class="field-control" id="login-password" name="password" type="password" autocomplete="current-password" required>
+            <button class="button button-primary auth-submit" type="submit">Masuk ke PAYROLLY</button>
+          </form>
+          <form class="auth-form" id="signup-form" hidden>
+            <label for="signup-name">Nama</label><input class="field-control" id="signup-name" name="name" autocomplete="name" maxlength="120" required>
+            <label for="signup-email">Email</label><input class="field-control" id="signup-email" name="email" type="email" autocomplete="email" required>
+            <label for="signup-password">Kata sandi</label><input class="field-control" id="signup-password" name="password" type="password" autocomplete="new-password" minlength="8" required>
+            <button class="button button-primary auth-submit" type="submit">Buat akun Guest</button>
+          </form>
+        </div>
+        <section class="guest-panel" id="guest-panel" hidden>
+          <span class="badge badge-guest">Guest</span>
+          <p id="guest-message">Akun Guest hanya dapat mengakses halaman publik.</p>
+          <button class="button button-quiet" id="guest-logout" type="button">Keluar</button>
+        </section>
+      </section>
+    </main>
+    <div class="app-shell" id="app-shell" hidden>
       <aside class="sidebar" id="sidebar">
         <a class="brand" href="#dashboard" aria-label="PAYROLLY dashboard">
           <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
@@ -29,6 +60,7 @@
           <button class="nav-link" data-page="attendance"><span class="nav-icon" data-icon="calendar"></span><span>Absensi</span></button>
           <button class="nav-link" data-page="payroll"><span class="nav-icon" data-icon="wallet"></span><span>Penggajian</span></button>
           <button class="nav-link" data-page="reports"><span class="nav-icon" data-icon="chart"></span><span>Laporan</span></button>
+          <button class="nav-link" data-page="users"><span class="nav-icon" data-icon="shield"></span><span>Pengguna</span></button>
         </nav>
 
         <div class="sidebar-bottom">
@@ -42,7 +74,7 @@
           <button class="icon-button mobile-menu" id="menu-toggle" aria-label="Buka navigasi"><span data-icon="menu"></span></button>
           <div class="breadcrumb"><span>PAYROLLY</span><span class="crumb-slash">/</span><strong id="breadcrumb-current">Dashboard</strong></div>
           <button class="command-trigger" id="command-trigger" type="button" aria-label="Cari menu atau aksi" aria-haspopup="dialog"><span data-icon="search"></span><span class="command-trigger-label">Cari menu atau aksi</span><kbd>Ctrl K</kbd></button>
-          <div class="topbar-right"><span class="today-label" id="today-label"></span><button class="icon-button theme-toggle" id="theme-toggle" type="button" aria-label="Aktifkan tema gelap" title="Ganti tema"><span data-icon="moon"></span></button><span class="user-avatar">AD</span><span class="user-name">Administrator</span></div>
+          <div class="topbar-right"><span class="today-label" id="today-label"></span><button class="icon-button theme-toggle" id="theme-toggle" type="button" aria-label="Aktifkan tema gelap" title="Ganti tema"><span data-icon="moon"></span></button><span class="user-avatar" id="user-avatar">AD</span><span class="user-identity"><span class="user-name" id="user-name">Administrator</span><span class="role-badge" id="user-role">ADMIN</span></span><button class="icon-button logout-button" id="logout-button" type="button" aria-label="Keluar" title="Keluar"><span data-icon="logout"></span></button></div>
         </header>
         <section class="content" id="page-content" aria-live="polite"></section>
         <footer class="page-footer">Sistem Informasi Akuntansi Penggajian dan Administrasi Karyawan pada Usaha Percetakan</footer>
@@ -62,6 +94,7 @@
         <button class="command-item" type="button" data-command="page" data-target="attendance" data-search="absensi kehadiran lembur"><span class="command-item-icon"><span data-icon="calendar"></span></span><span><strong>Absensi</strong><small>Kehadiran dan jam lembur</small></span><kbd>Enter</kbd></button>
         <button class="command-item" type="button" data-command="page" data-target="payroll" data-search="penggajian payroll pembayaran"><span class="command-item-icon"><span data-icon="wallet"></span></span><span><strong>Penggajian</strong><small>Perhitungan dan pembayaran</small></span><kbd>Enter</kbd></button>
         <button class="command-item" type="button" data-command="page" data-target="reports" data-search="laporan report"><span class="command-item-icon"><span data-icon="chart"></span></span><span><strong>Laporan</strong><small>Rincian payroll per periode</small></span><kbd>Enter</kbd></button>
+        <button class="command-item" type="button" data-command="page" data-target="users" data-search="pengguna akun role akses"><span class="command-item-icon"><span data-icon="shield"></span></span><span><strong>Pengguna</strong><small>Kelola akun dan role</small></span><kbd>Enter</kbd></button>
         <p class="command-title command-actions-title">AKSI CEPAT</p>
         <button class="command-item" type="button" data-command="action" data-target="add-employee" data-search="tambah karyawan pegawai baru"><span class="command-item-icon command-icon-rose"><span data-icon="plus"></span></span><span><strong>Tambah karyawan</strong><small>Isi data karyawan baru</small></span><kbd>Enter</kbd></button>
         <button class="command-item" type="button" data-command="action" data-target="add-attendance" data-search="catat absensi kehadiran lembur"><span class="command-item-icon command-icon-matcha"><span data-icon="plus"></span></span><span><strong>Catat absensi</strong><small>Tambah kehadiran atau lembur</small></span><kbd>Enter</kbd></button>

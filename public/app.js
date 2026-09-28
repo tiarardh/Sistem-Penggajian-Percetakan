@@ -24,11 +24,15 @@ const icons = {
   printer: '<path d="M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v7H6zM18 12h.01"/>',
   eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
   arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>',
+  logout: '<path d="M10 17l5-5-5-5M15 12H3M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6"/>',
 };
 
-const pageNames = { dashboard: 'Dashboard', positions: 'Jabatan', employees: 'Karyawan', attendance: 'Absensi', payroll: 'Penggajian', reports: 'Laporan' };
+const pageNames = { dashboard: 'Dashboard', positions: 'Jabatan', employees: 'Karyawan', attendance: 'Absensi', payroll: 'Penggajian', reports: 'Laporan', users: 'Pengguna' };
 const statusNames = { active: 'Aktif', inactive: 'Nonaktif', draft: 'Draft', paid: 'Dibayar', present: 'Hadir', leave: 'Izin', sick: 'Sakit', alpha: 'Alpha' };
-const state = { page: 'dashboard', editing: null, submitting: false, payrollRecords: [], preview: null, confirmResolver: null };
+const roleNames = { admin: 'Admin', karyawan: 'Karyawan', guest: 'Guest' };
+const state = { page: 'dashboard', editing: null, submitting: false, payrollRecords: [], preview: null, confirmResolver: null, user: null, profile: null, authMode: 'login' };
+const authShell = document.querySelector('#auth-shell');
+const appShell = document.querySelector('#app-shell');
 const content = document.querySelector('#page-content');
 const modal = document.querySelector('#form-modal');
 const commandPalette = document.querySelector('#command-palette');
@@ -76,7 +80,9 @@ function icon(name) {
 
 const SUPABASE_URL = 'https://vcwrbgnhwddtdptfofcl.supabase.co';
 const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_2O9jutNo02owmqkG8z1sIQ_HH3UKAOs';
-const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+});
 
 async function result(query) {
   const { data, error } = await query;
@@ -332,6 +338,22 @@ async function api(path, options = {}) {
     }
   }
 
+  if (resource === 'profiles') {
+    if (method === 'GET') return result(supabase.from('profiles').select('id,email,name,role,employee_id,created_at,employees(id,employee_number,full_name)').order('name'));
+    if (id && method === 'PATCH') {
+      const role = body.role;
+      if (!['admin', 'karyawan', 'guest'].includes(role)) throw new Error('Role pengguna tidak valid.');
+      const employeeId = role === 'karyawan' ? body.employee_id || null : null;
+      if (role === 'karyawan' && !employeeId) throw new Error('Pilih data karyawan untuk role Karyawan.');
+      const payload = {
+        name: requiredString(body.name, 'Nama pengguna', 120),
+        role,
+        employee_id: employeeId,
+      };
+      return result(supabase.from('profiles').update(payload).eq('id', id).select());
+    }
+  }
+
   if (resource === 'employees') {
     if (id && action === 'profile' && method === 'GET') {
       const [matches, attendance, payroll] = await Promise.all([
@@ -448,6 +470,96 @@ function setConnection(connected) {
   document.querySelector('#connection-dot').classList.toggle('connected', connected);
 }
 
+function applyRoleUI() {
+  const admin = state.profile?.role === 'admin';
+  const allowedPages = admin ? new Set(Object.keys(pageNames)) : new Set(['dashboard', 'attendance', 'payroll']);
+  document.documentElement.dataset.role = state.profile?.role || 'guest';
+  document.querySelectorAll('.nav-link').forEach((button) => { button.hidden = !allowedPages.has(button.dataset.page); });
+  document.querySelectorAll('.command-item[data-command="page"]').forEach((button) => { button.hidden = !allowedPages.has(button.dataset.target); });
+  document.querySelectorAll('.command-item[data-command="action"]').forEach((button) => {
+    button.hidden = !admin && button.dataset.target !== 'add-attendance';
+  });
+  const name = state.profile?.name || state.user?.email || 'Pengguna';
+  document.querySelector('#user-name').textContent = name;
+  document.querySelector('#user-avatar').textContent = name.split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
+  const role = document.querySelector('#user-role');
+  role.textContent = roleNames[state.profile?.role] || 'Guest';
+  role.className = `role-badge role-${state.profile?.role || 'guest'}`;
+}
+
+function setAuthNotice(message = '', isError = false) {
+  const notice = document.querySelector('#auth-notice');
+  notice.textContent = message;
+  notice.hidden = !message;
+  notice.classList.toggle('error', isError);
+}
+
+function setAuthMode(mode) {
+  state.authMode = mode;
+  document.querySelector('#login-form').hidden = mode !== 'login';
+  document.querySelector('#signup-form').hidden = mode !== 'signup';
+  document.querySelectorAll('[data-auth-mode]').forEach((button) => {
+    const active = button.dataset.authMode === mode;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+  });
+  document.querySelector('#auth-title').textContent = mode === 'login' ? 'Selamat datang kembali' : 'Buat akun Guest';
+  document.querySelector('.auth-copy').textContent = mode === 'login'
+    ? 'Masuk untuk melanjutkan ke ruang kerja PAYROLLY.'
+    : 'Akun baru hanya memperoleh akses publik sampai admin menetapkan role.';
+  setAuthNotice('');
+}
+
+function showLogin(message = '', isError = false) {
+  state.user = null;
+  state.profile = null;
+  authShell.hidden = false;
+  appShell.hidden = true;
+  document.querySelector('.auth-tabs').hidden = false;
+  document.querySelector('#auth-forms').hidden = false;
+  document.querySelector('#guest-panel').hidden = true;
+  setAuthMode('login');
+  setAuthNotice(message, isError);
+}
+
+async function activateSession(session) {
+  if (!session?.user) {
+    showLogin();
+    return;
+  }
+  const { data: profile, error } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
+  if (error) throw new Error(`Profil akun tidak dapat dimuat. Pastikan sql/schema.sql terbaru sudah dijalankan. ${error.message}`);
+  if (!['admin', 'karyawan', 'guest'].includes(profile.role)) throw new Error('Role akun tidak dikenali. Minta admin memperbaiki profil akun.');
+  state.user = session.user;
+  state.profile = profile;
+  setConnection(true);
+  if (profile.role === 'guest') {
+    appShell.hidden = true;
+    authShell.hidden = false;
+    document.querySelector('.auth-tabs').hidden = true;
+    document.querySelector('#auth-forms').hidden = true;
+    document.querySelector('#guest-panel').hidden = false;
+    document.querySelector('#guest-message').textContent = `${profile.name || session.user.email} masuk sebagai Guest. Akun ini tidak memiliki akses administrasi.`;
+    return;
+  }
+  authShell.hidden = true;
+  appShell.hidden = false;
+  applyRoleUI();
+  await render('dashboard');
+}
+
+function startAuth() {
+  supabase.auth.onAuthStateChange((_event, session) => {
+    window.setTimeout(() => activateSession(session).catch((error) => showLogin(error.message, true)), 0);
+  });
+  supabase.auth.getSession()
+    .then(({ data, error }) => {
+      if (error) throw error;
+      return activateSession(data.session);
+    })
+    .catch((error) => showLogin(error.message || 'Sesi login tidak dapat dipulihkan.', true));
+}
+
 function navigateTo(page, params = {}) {
   const query = new URLSearchParams(params);
   history.replaceState(null, '', query.size ? `${location.pathname}?${query}` : location.pathname);
@@ -500,13 +612,17 @@ function rowActions(id, editAction, extra = '') {
 }
 
 async function render(page = state.page) {
+  if (!state.user || !state.profile || state.profile.role === 'guest') return;
+  const employeePages = new Set(['dashboard', 'attendance', 'payroll']);
+  if (state.profile.role === 'karyawan' && !employeePages.has(page)) page = 'dashboard';
+  if (state.profile.role === 'admin' && !pageNames[page]) page = 'dashboard';
   state.page = page;
   document.querySelectorAll('.nav-link').forEach((button) => button.classList.toggle('active', button.dataset.page === page));
   document.querySelector('#breadcrumb-current').textContent = pageNames[page];
   document.querySelector('#sidebar').classList.remove('open');
   content.innerHTML = skeletonMarkup();
   try {
-    const views = { dashboard: renderDashboard, positions: renderPositions, employees: renderEmployees, attendance: renderAttendance, payroll: renderPayroll, reports: renderReports };
+    const views = { dashboard: renderDashboard, positions: renderPositions, employees: renderEmployees, attendance: renderAttendance, payroll: renderPayroll, reports: renderReports, users: renderUsers };
     await views[page]();
     setConnection(true);
   } catch (error) {
@@ -516,6 +632,7 @@ async function render(page = state.page) {
 }
 
 async function renderDashboard() {
+  if (state.profile.role === 'karyawan') return renderEmployeeDashboard();
   const period = currentPeriod();
   const [summary, payroll, employees] = await Promise.all([api(`dashboard?period=${period}`), api(`payroll?period=${period}`), api('employees')]);
   const percentPaid = summary.payrollCount ? Math.round((summary.paidCount / summary.payrollCount) * 100) : 0;
@@ -554,6 +671,25 @@ async function renderDashboard() {
     </div><p class="academic-title">Sistem Informasi Akuntansi Penggajian dan Administrasi Karyawan pada Usaha Percetakan</p>`;
 }
 
+async function renderEmployeeDashboard() {
+  const period = currentPeriod();
+  const [employees, attendance, payroll] = await Promise.all([
+    api('employees'),
+    api('attendance'),
+    api(`payroll?period=${period}`),
+  ]);
+  const employee = employees[0];
+  if (!employee) throw new Error('Akun ini belum dihubungkan ke data karyawan oleh admin.');
+  const monthAttendance = attendance.filter((record) => record.attendance_date.startsWith(period.slice(0, 7)));
+  const payrollTotal = payroll.reduce((total, record) => total + Number(record.total_net), 0);
+  const paidTotal = payroll.filter((record) => record.status === 'paid').reduce((total, record) => total + Number(record.total_net), 0);
+  const rows = payroll.slice(0, 6).map((record) => `<tr><td>${esc(monthLabel(record.period_month))}</td><td>${money(record.base_salary)}</td><td>${money(record.overtime_pay)}</td><td>${money(record.deduction)}</td><td>${money(record.total_net)}</td><td>${badge(record.status)}</td><td><button class="icon-button" data-action="view-slip" data-id="${esc(record.id)}" title="Lihat slip gaji" aria-label="Lihat slip gaji">${icon('file')}</button></td></tr>`);
+  content.innerHTML = `${heading('Dashboard saya', `Ringkasan pribadi · ${esc(employee.full_name)}`, `<button class="button button-primary" data-action="view-my-profile">${icon('eye')}<span>Profil saya</span></button>`)}
+    <section class="payroll-hero"><div class="hero-copy"><div class="hero-meta"><span class="hero-eyebrow">RINGKASAN PRIBADI</span><span class="hero-period"><i></i>${esc(monthLabel(period))}</span></div><h1>Halo, <span>${esc(employee.full_name.split(/\s+/)[0])}.</span></h1><p>${esc(employee.employee_number)} · ${esc(employee.positions?.name || 'Karyawan')}</p><div class="hero-total-label">PAYROLL PERIODE INI</div><strong class="hero-total">${money(payrollTotal)}</strong></div><div class="hero-side"><div class="hero-side-label">STATUS PEMBAYARAN</div><div class="hero-paid-count"><strong>${payroll.filter((record) => record.status === 'paid').length}<span>/${payroll.length}</span></strong><p>periode sudah<br>dibayar</p></div><div class="hero-status"><span><i class="status-dot paid"></i>Diterima <strong>${money(paidTotal)}</strong></span><span><i class="status-dot pending"></i>Menunggu <strong>${payroll.filter((record) => record.status === 'draft').length}</strong></span></div><button class="button button-hero" data-action="goto-payroll">${icon('wallet')}<span>Lihat payroll saya</span></button></div></section>
+    <div class="metric-grid dashboard-metrics"><article class="metric-card metric-people"><div class="metric-heading">${icon('calendar')}<span>ABSENSI BULAN INI</span></div><strong class="metric-value">${monthAttendance.length}</strong><span class="metric-note">Catatan kehadiran pribadi</span></article><article class="metric-card metric-active"><div class="metric-heading">${icon('clock')}<span>JAM LEMBUR</span></div><strong class="metric-value">${monthAttendance.reduce((sum, item) => sum + Number(item.overtime_hours), 0).toLocaleString('id-ID')}</strong><span class="metric-note">Akumulasi periode ini</span></article><article class="metric-card metric-pending"><div class="metric-heading">${icon('wallet')}<span>RIWAYAT PAYROLL</span></div><strong class="metric-value">${payroll.length}</strong><span class="metric-note">Periode tercatat</span></article></div>
+    ${tablePanel('Payroll saya', 'Riwayat gaji pribadi', ['PERIODE', 'GAJI POKOK', 'LEMBUR', 'POTONGAN', 'GAJI BERSIH', 'STATUS', 'SLIP'], rows, 'Belum ada payroll', 'Slip gaji akan muncul setelah payroll diproses.')}`;
+}
+
 async function renderPositions() {
   const positions = await api('positions');
   const query = new URLSearchParams(location.search).get('q')?.toLowerCase() || '';
@@ -589,7 +725,7 @@ async function renderAttendance() {
   } else {
     const filtered = allAttendance.filter((item) => (!period || item.attendance_date.startsWith(period)) && (status === 'all' || (status === 'leave-sick' ? ['leave', 'sick'].includes(item.status) : item.status === status)) && (!overtimeOnly || Number(item.overtime_hours) > 0));
     resultCount = filtered.length;
-    rows = filtered.map((item) => `<tr><td>${dateLabel(item.attendance_date)}</td><td><span class="cell-primary">${esc(item.employees?.full_name || '-')}</span><span class="cell-secondary">${esc(item.employees?.employee_number || '-')}</span></td><td>${badge(item.status)}</td><td>${Number(item.overtime_hours).toLocaleString('id-ID')} jam</td><td>${rowActions(item.id, 'edit-attendance', `<button class="icon-button" data-action="delete-attendance" data-id="${esc(item.id)}" title="Hapus absensi" aria-label="Hapus absensi">${icon('trash')}</button>`)}</td></tr>`);
+    rows = filtered.map((item) => `<tr><td>${dateLabel(item.attendance_date)}</td><td><span class="cell-primary">${esc(item.employees?.full_name || '-')}</span><span class="cell-secondary">${esc(item.employees?.employee_number || '-')}</span></td><td>${badge(item.status)}</td><td>${Number(item.overtime_hours).toLocaleString('id-ID')} jam</td><td>${rowActions(item.id, 'edit-attendance', state.profile.role === 'admin' ? `<button class="icon-button" data-action="delete-attendance" data-id="${esc(item.id)}" title="Hapus absensi" aria-label="Hapus absensi">${icon('trash')}</button>` : '')}</td></tr>`);
   }
   const description = missingMode ? `Hari kerja tanpa catatan absensi · ${monthLabel(`${periodForMissing}-01`)}` : 'Catat kehadiran, izin, sakit, alpha, dan jam lembur.';
   const toolbar = `<div class="toolbar"><label class="eyebrow toolbar-label" for="attendance-period">PERIODE</label><input class="field-control filter-control" id="attendance-period" type="month" value="${esc(period)}"><select class="field-control filter-control" id="attendance-status" aria-label="Filter status absensi" ${missingMode ? 'disabled' : ''}><option value="all" ${status === 'all' ? 'selected' : ''}>Semua status</option><option value="present" ${status === 'present' ? 'selected' : ''}>Hadir</option><option value="leave-sick" ${status === 'leave-sick' ? 'selected' : ''}>Izin / sakit</option><option value="alpha" ${status === 'alpha' ? 'selected' : ''}>Alpha</option></select><label class="check-filter"><input id="overtime-only" type="checkbox" ${overtimeOnly ? 'checked' : ''} ${missingMode ? 'disabled' : ''}><span>Lembur saja</span></label><button class="button button-quiet" data-action="toggle-missing" data-missing="${missingMode}">${missingMode ? 'Lihat riwayat absensi' : 'Cek absensi kosong'}</button><span class="toolbar-spacer"></span><span class="cell-secondary">${resultCount} catatan · ${employees.filter((item) => item.active).length} karyawan aktif</span></div>`;
@@ -620,6 +756,12 @@ async function renderReports() {
     <div class="toolbar"><label class="eyebrow toolbar-label" for="report-period">FILTER PERIODE</label><input class="field-control filter-control" id="report-period" type="month" value="${esc(filter)}"><button class="button button-quiet" data-action="report-all">Semua periode</button><span class="toolbar-spacer"></span><button class="button button-quiet" data-action="print-report">Cetak laporan</button></div>
     <div class="report-summary"><div class="report-chip"><span>Gaji pokok</span><strong>${money(report.baseSalary)}</strong></div><div class="report-chip"><span>Pembayaran lembur</span><strong>${money(report.overtimePay)}</strong></div><div class="report-chip"><span>Total potongan</span><strong>${money(report.deductions)}</strong></div><div class="report-chip"><span>Total gaji bersih</span><strong>${money(report.netTotal)}</strong></div></div>
     ${tablePanel('Rincian laporan', report.period === 'all' ? `${report.count} data payroll seluruh periode` : `Periode ${esc(monthLabel(`${filter}-01`))} · ${report.count} data payroll`, ['PERIODE', 'NO. KARYAWAN', 'NAMA KARYAWAN', 'JABATAN', 'GAJI POKOK', 'LEMBUR', 'POTONGAN', 'GAJI BERSIH', 'STATUS'], rows, 'Belum ada data payroll', 'Data laporan muncul setelah payroll dihitung.')}`;
+}
+
+async function renderUsers() {
+  const users = await api('profiles');
+  const rows = users.map((user) => `<tr><td><span class="cell-primary">${esc(user.name)}</span><span class="cell-secondary">${esc(user.email || '-')}</span></td><td><span class="badge badge-${esc(user.role)}">${esc(roleNames[user.role] || user.role)}</span></td><td>${user.employees ? `<span class="cell-primary">${esc(user.employees.full_name)}</span><span class="cell-secondary">${esc(user.employees.employee_number)}</span>` : '-'}</td><td>${dateLabel(user.created_at)}</td><td>${user.id === state.user.id ? '<span class="cell-secondary">Akun aktif</span>' : `<button class="icon-button" data-action="edit-user" data-id="${esc(user.id)}" title="Ubah role dan hubungan karyawan" aria-label="Ubah pengguna ${esc(user.name)}">${icon('edit')}</button>`}</td></tr>`);
+  content.innerHTML = `${heading('Pengguna', 'Kelola role dan tautkan akun karyawan yang sudah mendaftar.')}${tablePanel('Akun terdaftar', `${users.length} akun Supabase Auth`, ['NAMA / EMAIL', 'ROLE', 'DATA KARYAWAN', 'DIBUAT', 'AKSI'], rows, 'Belum ada akun', 'Akun akan tercatat setelah pengguna mendaftar melalui halaman login.')}`;
 }
 
 function renderPayrollReview(preview) {
@@ -764,6 +906,15 @@ async function openForm(kind, id = null, initial = {}) {
     fields.push(field('Status kehadiran', 'status', 'select', record?.status || 'present', { choices: [{ value: 'present', label: 'Hadir' }, { value: 'leave', label: 'Izin' }, { value: 'sick', label: 'Sakit' }, { value: 'alpha', label: 'Alpha' }] }));
     fields.push(field('Jam lembur', 'overtime_hours', 'number', record?.overtime_hours ?? 0, { min: '0', max: '24', step: '0.25', hint: 'Isi 0 bila tidak ada lembur.' }));
   }
+  if (kind === 'user') {
+    const employees = await api('employees');
+    title = 'Kelola akun pengguna';
+    const employeeChoices = employees.map((item) => ({ value: item.id, label: `${item.employee_number} · ${item.full_name}` }));
+    fields.push(field('Nama pengguna', 'name', 'text', record?.name || '', { autocomplete: 'name' }));
+    fields.push(field('Role', 'role', 'select', record?.role || 'guest', { choices: [{ value: 'admin', label: 'Admin' }, { value: 'karyawan', label: 'Karyawan' }, { value: 'guest', label: 'Guest' }] }));
+    fields.push(field('Tautkan data karyawan', 'employee_id', 'select', record?.employee_id || '', { required: false, choices: [{ value: '', label: 'Tidak ditautkan' }, ...employeeChoices], full: true }));
+    fields.push(`<p class="field-hint full">${esc(record?.email || '')}. Akun Supabase dibuat melalui pendaftaran; admin menetapkan role di sini.</p>`);
+  }
   document.querySelector('#modal-title').textContent = title;
   document.querySelector('#submit-label').textContent = record ? 'Simpan perubahan' : 'Simpan data';
   document.querySelector('#modal-fields').innerHTML = `<div class="form-grid">${fields.join('')}</div>`;
@@ -772,7 +923,7 @@ async function openForm(kind, id = null, initial = {}) {
 }
 
 async function loadRecord(kind, id) {
-  const endpoints = { position: 'positions', employee: 'employees', attendance: 'attendance' };
+  const endpoints = { position: 'positions', employee: 'employees', attendance: 'attendance', user: 'profiles' };
   const rows = await api(endpoints[kind]);
   const record = rows.find((item) => item.id === id);
   if (!record) throw new Error('Data tidak ditemukan. Muat ulang halaman lalu coba lagi.');
@@ -815,6 +966,49 @@ function moveCommandSelection(direction) {
   items[nextIndex].focus();
 }
 
+document.querySelectorAll('[data-auth-mode]').forEach((button) => button.addEventListener('click', () => setAuthMode(button.dataset.authMode)));
+document.querySelector('#login-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const submit = event.currentTarget.querySelector('[type="submit"]');
+  const values = Object.fromEntries(new FormData(event.currentTarget));
+  submit.disabled = true;
+  setAuthNotice('Memeriksa akun...');
+  try {
+    const { error } = await supabase.auth.signInWithPassword({ email: values.email, password: values.password });
+    if (error) throw error;
+  } catch (error) {
+    setAuthNotice(error.message || 'Login gagal.', true);
+  } finally {
+    submit.disabled = false;
+  }
+});
+document.querySelector('#signup-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const submit = event.currentTarget.querySelector('[type="submit"]');
+  const values = Object.fromEntries(new FormData(event.currentTarget));
+  submit.disabled = true;
+  setAuthNotice('Membuat akun Guest...');
+  try {
+    const { data, error } = await supabase.auth.signUp({
+      email: values.email,
+      password: values.password,
+      options: { data: { name: values.name }, emailRedirectTo: new URL('.', location.href).href },
+    });
+    if (error) throw error;
+    if (data.session) await activateSession(data.session);
+    else setAuthNotice('Pendaftaran berhasil. Verifikasi email jika diminta, lalu masuk sebagai Guest.');
+  } catch (error) {
+    setAuthNotice(error.message || 'Pendaftaran gagal.', true);
+  } finally {
+    submit.disabled = false;
+  }
+});
+async function logout() {
+  const { error } = await supabase.auth.signOut();
+  if (error) showError(error);
+}
+document.querySelector('#logout-button').addEventListener('click', logout);
+document.querySelector('#guest-logout').addEventListener('click', logout);
 document.querySelectorAll('.nav-link').forEach((button) => button.addEventListener('click', () => navigateTo(button.dataset.page)));
 document.querySelector('#menu-toggle').addEventListener('click', () => document.querySelector('#sidebar').classList.toggle('open'));
 themeToggle.addEventListener('click', () => applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
@@ -891,6 +1085,7 @@ document.querySelector('#record-form').addEventListener('submit', async (event) 
   const kind = state.editing?.kind || (state.page === 'positions' ? 'position' : state.page === 'employees' ? 'employee' : 'attendance');
   const payload = Object.fromEntries(form.entries());
   const wasEditing = Boolean(state.editing);
+  const editingId = state.editing?.id;
   if (kind === 'position') payload.base_salary = Number(payload.base_salary);
   if (kind === 'employee') payload.active = payload.active === 'true';
   if (kind === 'attendance') {
@@ -901,10 +1096,20 @@ document.querySelector('#record-form').addEventListener('submit', async (event) 
   const submit = event.currentTarget.querySelector('[type="submit"]');
   submit.disabled = true;
   try {
-    const endpoint = { position: 'positions', employee: 'employees', attendance: 'attendance' }[kind];
+    const endpoint = { position: 'positions', employee: 'employees', attendance: 'attendance', user: 'profiles' }[kind];
     const suffix = state.editing ? `/${state.editing.id}` : '';
     await api(`${endpoint}${suffix}`, { method: state.editing ? 'PATCH' : 'POST', body: payload });
     closeModal();
+    if (kind === 'user' && editingId === state.user.id) {
+      const roleChanged = state.profile.role !== payload.role;
+      state.profile = { ...state.profile, ...payload };
+      if (roleChanged) {
+        notify('Role akun berubah. Silakan masuk kembali.');
+        await supabase.auth.signOut();
+        return;
+      }
+      applyRoleUI();
+    }
     notify(wasEditing ? 'Perubahan berhasil disimpan.' : 'Data berhasil ditambahkan.');
     await render(state.page);
   } catch (error) {
@@ -943,6 +1148,8 @@ document.addEventListener('click', async (event) => {
     if (action === 'record-missing') return await openForm('attendance', null, { employee_id: id, attendance_date: button.dataset.date });
     if (action === 'preview-payroll') return await openPayrollReview(document.querySelector('#period-filter')?.value || monthInputValue());
     if (action === 'employee-profile') return await openEmployeeProfile(id);
+    if (action === 'view-my-profile') return await openEmployeeProfile(state.profile.employee_id);
+    if (action === 'edit-user') return await openForm('user', id);
     if (action === 'view-slip') return openPayrollSlip(id);
     if (action === 'view-audit') return await openPayrollAudit(id);
     if (action === 'print-slip') return printPayrollSlip();
@@ -1045,9 +1252,8 @@ document.addEventListener('input', (event) => {
   }, 220);
 });
 
-api('health').then((health) => setConnection(health.configured)).catch(() => setConnection(false));
 const savedTheme = localStorage.getItem('payrolly-theme');
 const preferredTheme = savedTheme || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 applyTheme(preferredTheme, false);
-render();
+startAuth();
 })();
