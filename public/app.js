@@ -254,7 +254,7 @@ async function calculatePayrollPreview(periodValue) {
 }
 
 async function api(path, options = {}) {
-  const request = new URL(path, location.href);
+  const request = new URL(path, 'https://payrolly.local/');
   const segments = request.pathname.split('/').filter(Boolean);
   const [resource, id, action] = segments;
   const method = options.method || 'GET';
