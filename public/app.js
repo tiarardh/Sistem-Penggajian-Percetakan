@@ -1,3 +1,4 @@
+(() => {
 const icons = {
   grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
   briefcase: '<rect x="3" y="7" width="18" height="14" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 12h18M10 12v2h4v-2"/>',
@@ -73,16 +74,362 @@ function icon(name) {
   return `<span data-icon="${name}"><svg viewBox="0 0 24 24" aria-hidden="true">${icons[name] || ''}</svg></span>`;
 }
 
-async function api(path, options = {}) {
-  const response = await fetch(`/api/${path}`, {
-    method: options.method || 'GET',
-    headers: options.body === undefined ? {} : { 'Content-Type': 'application/json' },
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
-  });
-  let data;
-  try { data = await response.json(); } catch { data = {}; }
-  if (!response.ok) throw new Error(data.error || 'Permintaan tidak berhasil.');
+const SUPABASE_URL = 'https://vcwrbgnhwddtdptfofcl.supabase.co';
+const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_2O9jutNo02owmqkG8z1sIQ_HH3UKAOs';
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+
+async function result(query) {
+  const { data, error } = await query;
+  if (error) throw new Error(error.message || 'Permintaan ke Supabase tidak berhasil.');
   return data;
+}
+
+function countWeekdays(startDate, endDate) {
+  if (startDate > endDate) return 0;
+  let count = 0;
+  const current = new Date(`${startDate}T00:00:00Z`);
+  const end = new Date(`${endDate}T00:00:00Z`);
+  while (current <= end) {
+    const day = current.getUTCDay();
+    if (day !== 0 && day !== 6) count += 1;
+    current.setUTCDate(current.getUTCDate() + 1);
+  }
+  return count;
+}
+
+function weekdayDates(startDate, endDate) {
+  if (startDate > endDate) return [];
+  const dates = [];
+  const current = new Date(`${startDate}T00:00:00Z`);
+  const end = new Date(`${endDate}T00:00:00Z`);
+  while (current <= end) {
+    const day = current.getUTCDay();
+    if (day !== 0 && day !== 6) dates.push(current.toISOString().slice(0, 10));
+    current.setUTCDate(current.getUTCDate() + 1);
+  }
+  return dates;
+}
+
+function validPeriod(value) {
+  if (typeof value !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])-01$/.test(value) || Number.isNaN(Date.parse(`${value}T00:00:00Z`))) {
+    throw new Error('Periode harus menggunakan format bulan yang valid.');
+  }
+  return value;
+}
+
+function requiredString(value, label, max = 120) {
+  if (typeof value !== 'string' || !value.trim() || value.trim().length > max) {
+    throw new Error(`${label} wajib diisi (maksimal ${max} karakter).`);
+  }
+  return value.trim();
+}
+
+function positiveNumber(value, label, allowZero = false) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || (allowZero ? number < 0 : number <= 0)) {
+    throw new Error(`${label} harus berupa angka ${allowZero ? 'nol atau lebih' : 'lebih dari nol'}.`);
+  }
+  return number;
+}
+
+function validDate(value, label) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(`${value}T00:00:00Z`)) || new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) !== value) {
+    throw new Error(`${label} harus menggunakan tanggal yang valid.`);
+  }
+  return value;
+}
+
+function employeePayload(body, partial = false) {
+  const payload = {};
+  if (!partial || 'employee_number' in body) payload.employee_number = requiredString(body.employee_number, 'Nomor karyawan', 40);
+  if (!partial || 'full_name' in body) payload.full_name = requiredString(body.full_name, 'Nama lengkap', 120);
+  if (!partial || 'position_id' in body) payload.position_id = requiredString(body.position_id, 'Jabatan', 60);
+  if (!partial || 'phone' in body) payload.phone = body.phone === '' || body.phone == null ? null : requiredString(body.phone, 'Nomor telepon', 30);
+  if (!partial || 'start_date' in body) payload.start_date = validDate(body.start_date, 'Tanggal mulai bekerja');
+  if ('active' in body) payload.active = Boolean(body.active);
+  return payload;
+}
+
+function attendancePayload(body, partial = false) {
+  const payload = {};
+  if (!partial || 'employee_id' in body) payload.employee_id = requiredString(body.employee_id, 'Karyawan', 60);
+  if (!partial || 'attendance_date' in body) payload.attendance_date = validDate(body.attendance_date, 'Tanggal absensi');
+  if (!partial || 'status' in body) {
+    if (!['present', 'leave', 'sick', 'alpha'].includes(body.status)) throw new Error('Status absensi tidak valid.');
+    payload.status = body.status;
+  }
+  if (!partial || 'overtime_hours' in body) payload.overtime_hours = positiveNumber(body.overtime_hours, 'Jam lembur', true);
+  if (payload.overtime_hours > 24) throw new Error('Jam lembur tidak boleh lebih dari 24 jam per hari.');
+  return payload;
+}
+
+async function calculatePayrollPreview(periodValue) {
+  const period = validPeriod(periodValue);
+  const monthStart = new Date(`${period}T00:00:00Z`);
+  const nextMonth = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 1));
+  const end = nextMonth.toISOString().slice(0, 10);
+  const endOfMonth = new Date(nextMonth.getTime() - 86_400_000).toISOString().slice(0, 10);
+  const today = new Date().toISOString().slice(0, 10);
+  const currentMonth = `${today.slice(0, 7)}-01`;
+  const cutoff = period === currentMonth ? today : period < currentMonth ? endOfMonth : `${period.slice(0, 7)}-00`;
+  const previousMonthDate = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() - 1, 1));
+  const previousPeriod = `${previousMonthDate.toISOString().slice(0, 7)}-01`;
+  const [employees, attendance, existing, previous] = await Promise.all([
+    result(supabase.from('employees').select('id,employee_number,full_name,start_date,positions(id,name,base_salary)').eq('active', true).order('full_name')),
+    result(supabase.from('attendance').select('employee_id,attendance_date,status,overtime_hours').gte('attendance_date', period).lt('attendance_date', end).order('attendance_date').limit(10000)),
+    result(supabase.from('payroll').select('id,employee_id,status,base_salary,total_net').eq('period_month', period)),
+    result(supabase.from('payroll').select('employee_id,total_net,base_salary').eq('period_month', previousPeriod)),
+  ]);
+  const existingByEmployee = new Map(existing.map((record) => [record.employee_id, record]));
+  const previousByEmployee = new Map(previous.map((record) => [record.employee_id, record]));
+  const records = employees.map((employee) => {
+    const rows = attendance.filter((row) => row.employee_id === employee.id);
+    const salary = Number(employee.positions.base_salary);
+    const overtimeHours = rows.reduce((sum, row) => sum + Number(row.overtime_hours), 0);
+    const absenceDays = rows.filter((row) => row.status === 'alpha').length;
+    const overtimePay = Math.round((salary / 173) * 1.5 * overtimeHours);
+    const monthDays = new Date(Date.UTC(nextMonth.getUTCFullYear(), nextMonth.getUTCMonth(), 0)).getUTCDate();
+    const workingDays = countWeekdays(period, endOfMonth);
+    const deduction = Math.round((salary / Math.max(workingDays, 1)) * absenceDays);
+    const totalNet = Math.max(0, salary + overtimePay - deduction);
+    const existingRecord = existingByEmployee.get(employee.id);
+    const previousRecord = previousByEmployee.get(employee.id);
+    const expectedDays = cutoff < period ? 0 : countWeekdays(employee.start_date > period ? employee.start_date : period, cutoff);
+    const missingDays = Math.max(0, expectedDays - rows.filter((row) => row.attendance_date <= cutoff).length);
+    const alerts = [];
+
+    if (existingRecord?.status === 'paid') alerts.push({ severity: 'info', code: 'already_paid', message: 'Payroll periode ini sudah dibayar dan tidak akan diubah.' });
+    if (missingDays > 0) alerts.push({ severity: missingDays > 3 ? 'warning' : 'info', code: 'missing_attendance', message: `${missingDays} hari kerja belum memiliki catatan absensi.` });
+    if (overtimeHours > 40) alerts.push({ severity: 'warning', code: 'high_overtime', message: `Lembur ${overtimeHours} jam melebihi ambang review 40 jam.` });
+    if (absenceDays > 3) alerts.push({ severity: 'warning', code: 'high_absence', message: `${absenceDays} hari alpha; periksa kembali catatan absensi.` });
+    if (previousRecord && Number(previousRecord.total_net) > 0 && Math.abs(totalNet - Number(previousRecord.total_net)) / Number(previousRecord.total_net) > .25) {
+      alerts.push({ severity: 'warning', code: 'pay_change', message: 'Gaji bersih berubah lebih dari 25% dibanding periode sebelumnya.' });
+    }
+    if (existingRecord && Number(existingRecord.base_salary) !== salary) alerts.push({ severity: 'info', code: 'salary_changed', message: 'Gaji pokok jabatan berubah sejak draft payroll terakhir.' });
+
+    return {
+      employee_id: employee.id,
+      employee_number: employee.employee_number,
+      full_name: employee.full_name,
+      position_name: employee.positions.name,
+      period_month: period,
+      base_salary: salary,
+      overtime_hours: overtimeHours,
+      overtime_pay: overtimePay,
+      absence_days: absenceDays,
+      deduction,
+      total_net: totalNet,
+      expected_attendance_days: expectedDays,
+      missing_attendance_days: missingDays,
+      status: existingRecord?.status || 'draft',
+      existing_payroll_id: existingRecord?.id || null,
+      alerts,
+      days_in_month: monthDays,
+    };
+  });
+  const writableRecords = records.filter((record) => record.status !== 'paid').map((record) => ({
+    employee_id: record.employee_id,
+    period_month: record.period_month,
+    base_salary: record.base_salary,
+    overtime_hours: record.overtime_hours,
+    overtime_pay: record.overtime_pay,
+    absence_days: record.absence_days,
+    deduction: record.deduction,
+    total_net: record.total_net,
+    status: 'draft',
+  }));
+  const summary = records.reduce((totals, record) => {
+    totals.baseSalary += record.base_salary;
+    totals.overtimePay += record.overtime_pay;
+    totals.deductions += record.deduction;
+    totals.netTotal += record.total_net;
+    totals.paidCount += record.status === 'paid' ? 1 : 0;
+    totals.draftCount += record.status === 'paid' ? 0 : 1;
+    totals.warningCount += record.alerts.filter((alert) => alert.severity === 'warning').length;
+    totals.missingAttendance += record.missing_attendance_days;
+    totals.overtimeHours += record.overtime_hours;
+    return totals;
+  }, { count: records.length, baseSalary: 0, overtimePay: 0, deductions: 0, netTotal: 0, paidCount: 0, draftCount: 0, warningCount: 0, missingAttendance: 0, overtimeHours: 0 });
+  return { period_month: period, records, writableRecords, summary, valid: true };
+}
+
+async function api(path, options = {}) {
+  const request = new URL(path, location.href);
+  const segments = request.pathname.split('/').filter(Boolean);
+  const [resource, id, action] = segments;
+  const method = options.method || 'GET';
+  const body = options.body || {};
+
+  if (resource === 'health' && method === 'GET') {
+    await result(supabase.from('positions').select('id').limit(1));
+    return { ok: true, configured: true };
+  }
+
+  if (resource === 'dashboard' && method === 'GET') {
+    const period = validPeriod(request.searchParams.get('period') || currentPeriod());
+    const today = new Date().toISOString().slice(0, 10);
+    const monthStart = new Date(`${period}T00:00:00Z`);
+    const nextMonth = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 1));
+    const endOfMonth = new Date(nextMonth.getTime() - 86_400_000).toISOString().slice(0, 10);
+    const cutoff = period.slice(0, 7) === today.slice(0, 7) ? today : period > `${today.slice(0, 7)}-01` ? null : endOfMonth;
+    const [employees, payroll, attendance] = await Promise.all([
+      result(supabase.from('employees').select('id,active,start_date,full_name')),
+      result(supabase.from('payroll').select('employee_id,total_net,status,created_at,employees(full_name)').eq('period_month', period)),
+      cutoff ? result(supabase.from('attendance').select('employee_id,attendance_date,status,overtime_hours,created_at').gte('attendance_date', period).lte('attendance_date', cutoff).order('attendance_date', { ascending: false }).limit(10000)) : Promise.resolve([]),
+    ]);
+    const activeEmployees = employees.filter((employee) => employee.active);
+    const paid = payroll.filter((row) => row.status === 'paid');
+    const attendanceSummary = { present: 0, leave: 0, sick: 0, alpha: 0, recorded: attendance.length, expected: 0, missing: 0 };
+    for (const row of attendance) attendanceSummary[row.status] += 1;
+    if (cutoff) {
+      attendanceSummary.expected = activeEmployees.reduce((total, employee) => total + countWeekdays(employee.start_date > period ? employee.start_date : period, cutoff), 0);
+      attendanceSummary.missing = Math.max(0, attendanceSummary.expected - attendanceSummary.recorded);
+    }
+    const overtimeHours = attendance.reduce((total, row) => total + Number(row.overtime_hours), 0);
+    const reviewAlerts = [];
+    if (attendanceSummary.missing > 0) reviewAlerts.push({ type: 'attendance', severity: attendanceSummary.missing > 3 ? 'warning' : 'info', count: attendanceSummary.missing, message: `${attendanceSummary.missing} hari kerja belum memiliki catatan absensi.` });
+    if (attendanceSummary.alpha > 0) reviewAlerts.push({ type: 'absence', severity: 'warning', count: attendanceSummary.alpha, message: `${attendanceSummary.alpha} catatan alpha perlu diperiksa.` });
+    if (overtimeHours > 40) reviewAlerts.push({ type: 'overtime', severity: 'warning', count: overtimeHours, message: `Total lembur ${overtimeHours} jam melewati ambang review.` });
+    if (payroll.some((row) => row.status === 'draft')) reviewAlerts.push({ type: 'payroll', severity: 'info', count: payroll.filter((row) => row.status === 'draft').length, message: 'Payroll draft menunggu review dan pembayaran.' });
+    const activities = [
+      ...payroll.map((row) => ({ type: 'payroll', label: `Payroll ${row.status === 'paid' ? 'dibayar' : 'dibuat'} untuk ${row.employees?.full_name || 'karyawan'}`, date: row.created_at })),
+      ...attendance.slice(0, 8).map((row) => ({ type: 'attendance', label: `Absensi ${row.status} dicatat`, date: row.created_at || row.attendance_date })),
+    ].sort((left, right) => String(right.date || '').localeCompare(String(left.date || ''))).slice(0, 5);
+    return {
+      employees: employees.length,
+      activeEmployees: activeEmployees.length,
+      payrollTotal: payroll.reduce((sum, row) => sum + Number(row.total_net), 0),
+      paidTotal: paid.reduce((sum, row) => sum + Number(row.total_net), 0),
+      payrollCount: payroll.length,
+      paidCount: paid.length,
+      draftCount: payroll.length - paid.length,
+      period,
+      attendance: attendanceSummary,
+      overtimeHours,
+      reviewAlerts,
+      activities,
+    };
+  }
+
+  if (resource === 'positions') {
+    if (method === 'GET') return result(supabase.from('positions').select('*').order('name'));
+    if (method === 'POST') {
+      const payload = { name: requiredString(body.name, 'Nama jabatan', 80), base_salary: positiveNumber(body.base_salary, 'Gaji pokok') };
+      return result(supabase.from('positions').insert(payload).select());
+    }
+    if (id && method === 'PATCH') {
+      const payload = {};
+      if ('name' in body) payload.name = requiredString(body.name, 'Nama jabatan', 80);
+      if ('base_salary' in body) payload.base_salary = positiveNumber(body.base_salary, 'Gaji pokok');
+      if (!Object.keys(payload).length) throw new Error('Tidak ada perubahan untuk disimpan.');
+      return result(supabase.from('positions').update(payload).eq('id', id).select());
+    }
+    if (id && method === 'DELETE') {
+      const employees = await result(supabase.from('employees').select('id').eq('position_id', id).limit(1));
+      if (employees.length) throw new Error('Jabatan masih digunakan karyawan dan tidak dapat dihapus.');
+      await result(supabase.from('positions').delete().eq('id', id));
+      return { message: 'Jabatan dihapus.' };
+    }
+  }
+
+  if (resource === 'employees') {
+    if (id && action === 'profile' && method === 'GET') {
+      const [matches, attendance, payroll] = await Promise.all([
+        result(supabase.from('employees').select('*,positions(id,name,base_salary)').eq('id', id).limit(1)),
+        result(supabase.from('attendance').select('attendance_date,status,overtime_hours').eq('employee_id', id).order('attendance_date', { ascending: false }).limit(1000)),
+        result(supabase.from('payroll').select('*').eq('employee_id', id).order('period_month', { ascending: false }).limit(120)),
+      ]);
+      const employee = matches[0];
+      if (!employee) throw new Error('Karyawan tidak ditemukan.');
+      const attendanceSummary = attendance.reduce((summary, row) => {
+        summary[row.status] += 1;
+        summary.overtimeHours += Number(row.overtime_hours);
+        return summary;
+      }, { present: 0, leave: 0, sick: 0, alpha: 0, overtimeHours: 0 });
+      return {
+        employee,
+        attendance: attendanceSummary,
+        payroll: {
+          count: payroll.length,
+          totalNet: payroll.reduce((sum, row) => sum + Number(row.total_net), 0),
+          paidCount: payroll.filter((row) => row.status === 'paid').length,
+          records: payroll,
+        },
+        recentAttendance: attendance.slice(0, 12),
+      };
+    }
+    if (method === 'GET') return result(supabase.from('employees').select('*,positions(id,name,base_salary)').order('full_name'));
+    if (method === 'POST') return result(supabase.from('employees').insert(employeePayload(body)).select());
+    if (id && method === 'PATCH') return result(supabase.from('employees').update(employeePayload(body, true)).eq('id', id).select());
+    if (id && method === 'DELETE') return result(supabase.from('employees').update({ active: false }).eq('id', id).select());
+  }
+
+  if (resource === 'attendance') {
+    if (id === 'missing' && method === 'GET') {
+      const requestedPeriod = request.searchParams.get('period') || `${new Date().toISOString().slice(0, 7)}-01`;
+      const period = /^\d{4}-\d{2}$/.test(requestedPeriod) ? `${requestedPeriod}-01` : validPeriod(requestedPeriod);
+      validPeriod(period);
+      const today = new Date().toISOString().slice(0, 10);
+      const start = new Date(`${period}T00:00:00Z`);
+      const nextMonth = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1));
+      const monthEnd = new Date(nextMonth.getTime() - 86_400_000).toISOString().slice(0, 10);
+      const cutoff = period.slice(0, 7) === today.slice(0, 7) ? today : period > `${today.slice(0, 7)}-01` ? null : monthEnd;
+      if (!cutoff) return { period, count: 0, records: [] };
+      const [employees, attendance] = await Promise.all([
+        result(supabase.from('employees').select('id,employee_number,full_name,start_date,positions(name)').eq('active', true).order('full_name')),
+        result(supabase.from('attendance').select('employee_id,attendance_date').gte('attendance_date', period).lte('attendance_date', cutoff).limit(10000)),
+      ]);
+      const recorded = new Set(attendance.map((row) => `${row.employee_id}:${row.attendance_date}`));
+      const records = employees.flatMap((employee) => weekdayDates(employee.start_date > period ? employee.start_date : period, cutoff)
+        .filter((day) => !recorded.has(`${employee.id}:${day}`))
+        .map((day) => ({ employee_id: employee.id, employee_number: employee.employee_number, full_name: employee.full_name, position_name: employee.positions?.name || '-', attendance_date: day })));
+      return { period, count: records.length, records };
+    }
+    if (method === 'GET') return result(supabase.from('attendance').select('*,employees(id,employee_number,full_name)').order('attendance_date', { ascending: false }).limit(500));
+    if (method === 'POST') return result(supabase.from('attendance').insert(attendancePayload(body)).select());
+    if (id && method === 'PATCH') return result(supabase.from('attendance').update(attendancePayload(body, true)).eq('id', id).select());
+    if (id && method === 'DELETE') {
+      await result(supabase.from('attendance').delete().eq('id', id));
+      return { message: 'Absensi dihapus.' };
+    }
+  }
+
+  if (resource === 'payroll' && id === 'preview' && method === 'POST') return calculatePayrollPreview(body.period_month);
+  if (resource === 'payroll' && !id && method === 'GET') {
+    let query = supabase.from('payroll').select('*,employees(id,employee_number,full_name,positions(name))').order('period_month', { ascending: false }).order('created_at', { ascending: false }).limit(1000);
+    if (request.searchParams.has('period')) query = query.eq('period_month', validPeriod(request.searchParams.get('period')));
+    return result(query);
+  }
+  if (resource === 'payroll' && id === 'generate' && method === 'POST') {
+    const preview = await calculatePayrollPreview(body.period_month);
+    if (!preview.writableRecords.length) return { ...preview, preview_records: preview.records, count: 0, skipped_paid: preview.summary.paidCount, records: [] };
+    const saved = await result(supabase.from('payroll').upsert(preview.writableRecords, { onConflict: 'employee_id,period_month' }).select());
+    return { ...preview, preview_records: preview.records, count: saved.length, skipped_paid: preview.summary.paidCount, records: saved };
+  }
+  if (resource === 'payroll' && id && action === 'paid' && method === 'PATCH') {
+    const rows = await result(supabase.from('payroll').update({ status: 'paid', paid_at: new Date().toISOString() }).eq('id', id).eq('status', 'draft').select());
+    if (!rows.length) throw new Error('Payroll tidak ditemukan atau sudah dibayar.');
+    return rows;
+  }
+  if (resource === 'payroll' && id && action === 'audit' && method === 'GET') {
+    return result(supabase.from('payroll_audit').select('*').eq('payroll_id', id).order('created_at', { ascending: false }).limit(100));
+  }
+  if (resource === 'reports' && method === 'GET') {
+    const period = request.searchParams.get('period');
+    let query = supabase.from('payroll').select('*,employees(employee_number,full_name,positions(name))').order('period_month', { ascending: false }).order('employees(full_name)', { ascending: true }).limit(1000);
+    if (period) query = query.eq('period_month', validPeriod(period));
+    const records = await result(query);
+    return {
+      period: period || 'all',
+      count: records.length,
+      baseSalary: records.reduce((sum, row) => sum + Number(row.base_salary), 0),
+      overtimePay: records.reduce((sum, row) => sum + Number(row.overtime_pay), 0),
+      deductions: records.reduce((sum, row) => sum + Number(row.deduction), 0),
+      netTotal: records.reduce((sum, row) => sum + Number(row.total_net), 0),
+      records,
+    };
+  }
+  throw new Error('Permintaan tidak didukung.');
 }
 
 function notify(message, type = 'success') {
@@ -703,3 +1050,4 @@ const savedTheme = localStorage.getItem('payrolly-theme');
 const preferredTheme = savedTheme || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 applyTheme(preferredTheme, false);
 render();
+})();

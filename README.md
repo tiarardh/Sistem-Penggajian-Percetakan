@@ -4,35 +4,25 @@ Employee & Payroll Management System untuk **Sistem Informasi Akuntansi Penggaji
 
 ## Persyaratan
 
-- Node.js 18 atau lebih baru (menggunakan `fetch` bawaan Node).
 - Project Supabase PostgreSQL.
-
-Tidak ada npm package, `package.json`, atau file env yang diperlukan.
+- GitHub Pages untuk hosting frontend static (tidak memerlukan Node.js).
 
 ## Setup Supabase
 
 1. Buka **SQL Editor** di dashboard Supabase.
 2. Jalankan seluruh isi [`sql/schema.sql`](sql/schema.sql). Empat jabatan awal akan ditambahkan otomatis.
 3. Ambil **Project URL** dan **Publishable Key** dari pengaturan API project Supabase.
-4. Masukkan nilainya pada konstanta `SUPABASE_URL` dan `SUPABASE_PUBLISHABLE_KEY` di `app.js`, atau berikan sebagai environment variable saat menjalankan server.
+4. Masukkan nilainya pada konstanta `SUPABASE_URL` dan `SUPABASE_PUBLISHABLE_KEY` di `public/app.js`. Publishable key memang digunakan di browser; jangan pernah memasukkan Secret atau Service Role Key.
 
-Saat memperbarui project, jalankan ulang seluruh `sql/schema.sql` di SQL Editor. Seed memakai `ON CONFLICT DO NOTHING`, sehingga data lama tidak ditimpa. Versi ini menambahkan tabel pendamping `payroll_audit` dan trigger audit; jalankan schema terbaru agar halaman riwayat payroll dapat membaca log.
+Saat memperbarui project, jalankan ulang seluruh `sql/schema.sql` di SQL Editor. Seed memakai `ON CONFLICT DO NOTHING`, sehingga data lama tidak ditimpa. Schema juga membuat tabel `payroll_audit` dan trigger audit.
 
-Contoh PowerShell:
+## Deploy GitHub Pages
 
-```powershell
-$env:SUPABASE_URL = "https://project-ref.supabase.co"
-$env:SUPABASE_PUBLISHABLE_KEY = "sb_publishable_your-key"
-node app.js
-```
+1. Simpan perubahan project ke repository GitHub.
+2. Pada **Settings > Pages**, pilih branch dan folder root (`/`).
+3. Buka `https://<username>.github.io/Sistem-Penggajian-Percetakan/`. `index.html` di root memuat frontend dari `public/` dengan path relatif.
 
-Alternatifnya, isi konstanta di bagian atas `app.js`, kemudian jalankan:
-
-```powershell
-node app.js
-```
-
-Buka <http://localhost:3000>. Port dapat diubah dengan environment variable `PORT`.
+GitHub Pages hanya menyajikan file static. `public/app.js` memakai Supabase JS dari CDN dan mengakses PostgreSQL melalui Supabase Data API; server Node `app.js` tidak dibutuhkan.
 
 ## Perhitungan Payroll
 
@@ -44,13 +34,14 @@ Buka <http://localhost:3000>. Port dapat diubah dengan environment variable `POR
 
 ## Catatan Keamanan
 
-Kebijakan RLS dalam schema memberi akses penuh kepada role `anon` untuk keperluan prototype lokal tanpa autentikasi. Jangan gunakan konfigurasi ini untuk data karyawan sungguhan atau aplikasi produksi sebelum menambahkan autentikasi, mempersempit policy RLS, dan membatasi akses berdasarkan pengguna. Gunakan hanya **Publishable Key**; jangan memasukkan Secret/Service Role Key ke aplikasi.
+Kebijakan RLS dalam schema memberi akses penuh kepada role `anon` tanpa autentikasi, termasuk perubahan data. Ini hanya cocok untuk prototype/demo. Jangan gunakan konfigurasi ini untuk data karyawan sungguhan atau aplikasi produksi sebelum menambahkan autentikasi dan mempersempit policy RLS. Publishable key aman untuk ditempatkan di frontend hanya jika policy RLS membatasi akses sebagaimana mestinya; jangan memasukkan Secret/Service Role Key ke aplikasi.
 
 ## Struktur
 
 ```text
 .
 ├── app.js
+├── index.html
 ├── public/
 │   ├── app.js
 │   ├── index.html

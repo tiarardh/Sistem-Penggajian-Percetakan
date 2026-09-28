@@ -9,9 +9,9 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="./styles.css">
+    <link rel="stylesheet" href="./public/styles.css">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
-    <script src="./app.js" defer></script>
+    <script src="./public/app.js" defer></script>
   </head>
   <body>
     <div class="app-shell">
@@ -72,7 +72,7 @@
     <dialog class="workflow-modal" id="review-modal" aria-labelledby="review-title">
       <div class="modal-head"><div><span class="eyebrow">PAYROLL REVIEW</span><h2 id="review-title">Preview dan validasi payroll</h2></div><button class="icon-button" type="button" data-close-dialog="review-modal" aria-label="Tutup review"><span data-icon="close"></span></button></div>
       <div class="workflow-body" id="review-content"></div>
-      <div class="modal-actions"><button class="button button-quiet" type="button" data-close-dialog="review-modal">Tutup</button><button class="button button-primary" id="save-preview" type="button" disabled>${'Simpan sebagai draft'}</button></div>
+      <div class="modal-actions"><button class="button button-quiet" type="button" data-close-dialog="review-modal">Tutup</button><button class="button button-primary" id="save-preview" type="button" disabled>Simpan sebagai draft</button></div>
     </dialog>
     <dialog class="workflow-modal" id="profile-modal" aria-labelledby="profile-title">
       <div class="modal-head"><div><span class="eyebrow">EMPLOYEE 360</span><h2 id="profile-title">Profil karyawan</h2></div><button class="icon-button" type="button" data-close-dialog="profile-modal" aria-label="Tutup profil"><span data-icon="close"></span></button></div>
